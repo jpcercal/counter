@@ -1,0 +1,111 @@
+name: Counter
+
+on: [push]
+
+jobs:
+  docker-security-checker:
+    name: docker-security-checker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - run: |
+          docker build -t ${{ github.sha }} .
+
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ github.sha }}'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+  go-security-checker:
+    name: go-security-checker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - run: |
+          go mod download
+
+      - run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+      - run: |
+          gosec -fmt=json -out=gosec.json ./...
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosec.json
+          path: gosec.json
+
+  golangci-lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+
+      - uses: golangci/golangci-lint-action@v3.7.0
+        with:
+          version: 'v1.55.2'
+          args: --verbose
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+          cache: true
+      
+      - run: |
+          go mod download
+
+      - run: |
+          go install github.com/kyoh86/richgo@latest
+
+      - run: |
+          go install github.com/jstemmer/go-junit-report/v2@latest
+
+      - run: |
+          PATH=$HOME/go/bin/:$PATH go test -race -covermode atomic -coverprofile=covprofile.out -v ./... | tee >(richgo testfilter) | go-junit-report -set-exit-code > report.xml
+
+      - run: |
+          go tool cover -func=covprofile.out
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path:  |
+            report.xml
+            covprofile.out
+
+      - uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./covprofile.out
+          fail_ci_if_error: false
+          verbose: true
